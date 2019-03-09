@@ -1,55 +1,65 @@
 #include <Wire.h>
-
+const int BUFFER_SIZE = 50;
 const uint8_t MPU6050Address = 0x68;
+const int LPFCounter = 20;
+const int CalibrationCounter = 250;
+
 float accelX, accelY, accelZ;
 int16_t sampleX, sampleY, sampleZ;
-float calibratedX, calibratedY, calibratedZ;
+long calibratedX, calibratedY, calibratedZ;
 float sample2X, sample2Y, sample2Z;
 byte counter = 0;
+int idx;
 unsigned long currentms, lastms, timer;
-const int LPFCounter = 100;
-const int CalibrationCounter = 200;
+
+float xAccBuffer[BUFFER_SIZE], yAccBuffer[BUFFER_SIZE], zAccBuffer[BUFFER_SIZE];
 
 void setup() {
   Wire.begin(D7, D6);
-  Serial.begin(9600);
+  Serial.begin(115200);
   MPUSetup();
   Calibration();                                    //Calibrate sensor during startup
 }
 
 void loop() {
-  timer = millis();
-  counter = 0;
-  while (counter <= LPFCounter) {
-    currentms = millis();
-    if (currentms - lastms >= 1) {                  //get sample every 1ms (Accelerometer Sampling rate is 1kHz)
-      lastms = currentms;
-      counter++;
-      readAcceleration();
-      sample2X += sampleX;
-      sample2Y += sampleY;
-      sample2Z += sampleZ;
+  readCalibratedAcceleration();
+  if ((accelX != 0) || (accelY != 0) || (accelZ != 0)) {
+    while (idx < BUFFER_SIZE) {
+      readCalibratedAcceleration();
+      xAccBuffer[idx] = accelX;
+      yAccBuffer[idx] = accelY;
+      zAccBuffer[idx] = accelZ;
+      idx++;
+    }
+    idx = 0;
+    Serial.print("AccelX: ");
+    for (int x = 0 ; x < BUFFER_SIZE; x++) {
+      Serial.print(xAccBuffer[x],4);
+      Serial.print(" ");
+    }
+    Serial.println(" ");
+    Serial.print("AccelY: ");
+    for (int x = 0 ; x < BUFFER_SIZE; x++) {
+      Serial.print(yAccBuffer[x],4);
+      Serial.print(" ");
+    }
+    Serial.println(" ");
+    Serial.print("AccelZ: ");
+    for (int x = 0 ; x < BUFFER_SIZE; x++) {
+      Serial.print(zAccBuffer[x],4);
+      Serial.print(" ");
     }
   }
-  counter = 0;
-  sample2X = sample2X / LPFCounter;
-  sample2Y = sample2Y / LPFCounter;
-  sample2Z = sample2Z / LPFCounter;
-  accelX = sample2X - calibratedX;
-  accelY = sample2Y - calibratedY;
-  accelZ = sample2Z - calibratedZ;
-  sample2X = 0;
-  sample2Y = 0;
-  sample2Z = 0;
-  Serial.print(millis() - timer);
-  Serial.print("ms ");
-  Serial.print("Accel X: ");
-  Serial.print(accelX / 1670.7, 4);
-  Serial.print("  Accel Y: ");
-  Serial.print(accelY / 1670.7, 4);
-  Serial.print("  Accel Z: ");
-  Serial.println(accelZ / 1670.7, 4);
-  delay(100);
+  
+    Serial.print(millis() - timer);
+    Serial.print("ms ");
+    Serial.print("Accel X: ");
+    Serial.print(accelX, 4);
+    Serial.print("  Accel Y: ");
+    Serial.print(accelY, 4);
+    Serial.print("  Accel Z: ");
+    Serial.println(accelZ, 4);
+  
 }
 
 void MPUSetup() {
@@ -69,7 +79,7 @@ void MPUSetup() {
   Wire.endTransmission();
 }
 
-void readAcceleration() {
+void readRawAcceleration() {
   Wire.beginTransmission(MPU6050Address);
   Wire.write(0x3B);                                 //Starting register for Accel Readings
   Wire.endTransmission();
@@ -78,24 +88,57 @@ void readAcceleration() {
   sampleX = Wire.read() << 8 | Wire.read();
   sampleY = Wire.read() << 8 | Wire.read();
   sampleZ = Wire.read() << 8 | Wire.read();
-  /*Serial.print("Accel X: ");
-  Serial.print(sampleX / 16384.0, 4);
-  Serial.print("  Accel Y: ");
-  Serial.print(sampleY / 16384.0, 4);
-  Serial.print("  Accel Z: ");
-  Serial.println(sampleZ / 16384.0, 4);*/
+}
+
+void readCalibratedAcceleration() {
+  timer = millis();
+  counter = 0;
+  while (counter <= LPFCounter) {
+    currentms = millis();
+    if (currentms - lastms >= 1) {                  //get sample every 1ms (Accelerometer Max Sampling rate is 1kHz)
+      lastms = currentms;
+      counter++;
+      readRawAcceleration();
+      sample2X += sampleX;
+      sample2Y += sampleY;
+      sample2Z += sampleZ;
+    }
+  }
+  counter = 0;
+  sample2X = sample2X / LPFCounter;
+  sample2Y = sample2Y / LPFCounter;
+  sample2Z = sample2Z / LPFCounter;
+  accelX = sample2X - calibratedX;
+  accelY = sample2Y - calibratedY;
+  accelZ = sample2Z - calibratedZ;
+  sample2X = 0;
+  sample2Y = 0;
+  sample2Z = 0;
+  accelX = accelX / 1670.7;
+  accelY = accelY / 1670.7;
+  accelZ = accelZ / 1670.7;
+
+  if ((accelX < 0.05) && (accelX > -0.05)) {
+    accelX = 0;
+  }
+  if ((accelY < 0.05) && (accelY > -0.05)) {
+    accelY = 0;
+  }
+  if ((accelZ < 0.5) && (accelZ > -0.5)) {
+    accelZ = 0;
+  }
 }
 
 void Calibration() {
   counter = 0;
-  readAcceleration();
+  readRawAcceleration();
   delay(100);
   Serial.print("Calibrating");
   while (counter < CalibrationCounter) {
     currentms = millis();
     if (currentms - lastms >= 1) {                  //get sample every 1ms (Accelerometer Sampling rate is 1kz)
       lastms = currentms;
-
+      readRawAcceleration();
       calibratedX = calibratedX + sampleX;
       calibratedY = calibratedY + sampleY;
       calibratedZ = calibratedZ + sampleZ;
