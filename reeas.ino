@@ -1,8 +1,12 @@
 #include <Wire.h>
+#include <ArduinoJson.h>
 const int BUFFER_SIZE = 50;
 const uint8_t MPU6050Address = 0x68;
 const int LPFCounter = 20;
 const int CalibrationCounter = 250;
+const byte deviceID = 1;
+const double longitude = 1234.1234;
+const double latitude = 4321.4321;
 
 float accelX, accelY, accelZ;
 int16_t sampleX, sampleY, sampleZ;
@@ -32,34 +36,38 @@ void loop() {
       idx++;
     }
     idx = 0;
-    Serial.print("AccelX: ");
-    for (int x = 0 ; x < BUFFER_SIZE; x++) {
-      Serial.print(xAccBuffer[x],4);
+
+    serializeToJSON();
+
+    /*
+      Serial.print("AccelX: ");
+      for (int x = 0 ; x < BUFFER_SIZE; x++) {
+      Serial.print(xAccBuffer[x], 4);
       Serial.print(" ");
-    }
-    Serial.println(" ");
-    Serial.print("AccelY: ");
-    for (int x = 0 ; x < BUFFER_SIZE; x++) {
-      Serial.print(yAccBuffer[x],4);
+      }
+      Serial.println(" ");
+      Serial.print("AccelY: ");
+      for (int x = 0 ; x < BUFFER_SIZE; x++) {
+      Serial.print(yAccBuffer[x], 4);
       Serial.print(" ");
-    }
-    Serial.println(" ");
-    Serial.print("AccelZ: ");
-    for (int x = 0 ; x < BUFFER_SIZE; x++) {
-      Serial.print(zAccBuffer[x],4);
+      }
+      Serial.println(" ");
+      Serial.print("AccelZ: ");
+      for (int x = 0 ; x < BUFFER_SIZE; x++) {
+      Serial.print(zAccBuffer[x], 4);
       Serial.print(" ");
-    }
+      }
+    */
   }
-  
-    Serial.print(millis() - timer);
-    Serial.print("ms ");
-    Serial.print("Accel X: ");
-    Serial.print(accelX, 4);
-    Serial.print("  Accel Y: ");
-    Serial.print(accelY, 4);
-    Serial.print("  Accel Z: ");
-    Serial.println(accelZ, 4);
-  
+  Serial.print(millis() - timer);
+  Serial.print("ms ");
+  Serial.print("Accel X: ");
+  Serial.print(accelX, 4);
+  Serial.print("  Accel Y: ");
+  Serial.print(accelY, 4);
+  Serial.print("  Accel Z: ");
+  Serial.println(accelZ, 4);
+
 }
 
 void MPUSetup() {
@@ -158,4 +166,26 @@ void Calibration() {
   Serial.print(calibratedY);
   Serial.print(" Z offset: ");
   Serial.println(calibratedZ);
+}
+
+void serializeToJSON() {
+  const size_t capacity = 3 * JSON_ARRAY_SIZE(50) + JSON_OBJECT_SIZE(6);
+  DynamicJsonDocument doc(capacity);
+
+  doc["id"] = deviceID;
+  doc["long"] = longitude;
+  doc["lat"] = latitude;
+  JsonArray xacc = doc.createNestedArray("xacc");
+  for (int i = 0; i < BUFFER_SIZE; i++) {
+    xacc.add(xAccBuffer[i]);
+  }
+  JsonArray yacc = doc.createNestedArray("yacc");
+  for (int i = 0; i < BUFFER_SIZE; i++) {
+    yacc.add(yAccBuffer[i]);
+  }
+  JsonArray zacc = doc.createNestedArray("zacc");
+  for (int i = 0; i < BUFFER_SIZE; i++) {
+    zacc.add(zAccBuffer[i]);
+  }
+  serializeJsonPretty(doc, Serial);
 }
