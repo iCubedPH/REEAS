@@ -1,5 +1,12 @@
+#include <NTPClient.h>
+#include <WiFiUdp.h>
+#include <ESP8266WiFi.h>
 #include <Wire.h>
 #include <ArduinoJson.h>
+
+const char *ssid     = "PLDTHOMEFIBR_EtnmV";
+const char *password = "PLDTWIFIRtmBK";
+
 const int BUFFER_SIZE = 50;
 const uint8_t MPU6050Address = 0x68;
 const int LPFCounter = 20;
@@ -18,9 +25,29 @@ unsigned long currentms, lastms, timer;
 
 float xAccBuffer[BUFFER_SIZE], yAccBuffer[BUFFER_SIZE], zAccBuffer[BUFFER_SIZE];
 
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP);
+
 void setup() {
   Wire.begin(D7, D6);
   Serial.begin(115200);
+  
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+  WiFi.begin(ssid, password);
+  WiFi.begin(ssid, password);
+  while ( WiFi.status() != WL_CONNECTED ) {
+    delay ( 500 );
+    Serial.print ( "." );
+  }
+  Serial.println("");
+  Serial.println("WiFi connected.");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+  timeClient.begin();
+  timeClient.update();
+  timeClient.setTimeOffset(28800);
+  
   MPUSetup();
   Calibration();                                    //Calibrate sensor during startup
 }
@@ -36,28 +63,7 @@ void loop() {
       idx++;
     }
     idx = 0;
-
     serializeToJSON();
-
-    /*
-      Serial.print("AccelX: ");
-      for (int x = 0 ; x < BUFFER_SIZE; x++) {
-      Serial.print(xAccBuffer[x], 4);
-      Serial.print(" ");
-      }
-      Serial.println(" ");
-      Serial.print("AccelY: ");
-      for (int x = 0 ; x < BUFFER_SIZE; x++) {
-      Serial.print(yAccBuffer[x], 4);
-      Serial.print(" ");
-      }
-      Serial.println(" ");
-      Serial.print("AccelZ: ");
-      for (int x = 0 ; x < BUFFER_SIZE; x++) {
-      Serial.print(zAccBuffer[x], 4);
-      Serial.print(" ");
-      }
-    */
   }
   Serial.print(millis() - timer);
   Serial.print("ms ");
@@ -169,12 +175,13 @@ void Calibration() {
 }
 
 void serializeToJSON() {
-  const size_t capacity = 3 * JSON_ARRAY_SIZE(50) + JSON_OBJECT_SIZE(6);
+  const size_t capacity = 3 * JSON_ARRAY_SIZE(50) + JSON_OBJECT_SIZE(7);
   DynamicJsonDocument doc(capacity);
 
   doc["id"] = deviceID;
   doc["long"] = longitude;
   doc["lat"] = latitude;
+  doc["time"] = timeClient.getEpochTime();
   JsonArray xacc = doc.createNestedArray("xacc");
   for (int i = 0; i < BUFFER_SIZE; i++) {
     xacc.add(xAccBuffer[i]);
@@ -187,5 +194,5 @@ void serializeToJSON() {
   for (int i = 0; i < BUFFER_SIZE; i++) {
     zacc.add(zAccBuffer[i]);
   }
-  serializeJsonPretty(doc, Serial);
+  serializeJson(doc, Serial);
 }
