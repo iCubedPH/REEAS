@@ -8,33 +8,34 @@ const char *ssid     = "PLDTHOMEFIBR_EtnmV";
 const char *password = "PLDTWIFIRtmBK";
 
 const int BUFFER_SIZE = 50;
+const int BUFFER_SIZE_SAMPLE = 110;
+const int STACount = 10, LTACount = 100;
 const uint8_t MPU6050Address = 0x68;
 const int LPFCounter = 20;
 const int CalibrationCounter = 250;
 const byte deviceID = 1;
-const double longitude = 1234.1234;
-const double latitude = 4321.4321;
 
-float accelX, accelY, accelZ;
+byte counter = 0, waveType = 0, idleCounter = 50, indexOfBuffer, staIndex, ltaIndex;                 //Wave type : 0 for P-Wave, 1 for S-Wave
+
+float accelX, accelY, accelZ, zSTA, zLTA, ratio;
 int16_t sampleX, sampleY, sampleZ;
 long calibratedX, calibratedY, calibratedZ;
 float sample2X, sample2Y, sample2Z;
-byte counter = 0;
-int idx;
 unsigned long currentms, lastms, timer;
 
 float xAccBuffer[BUFFER_SIZE], yAccBuffer[BUFFER_SIZE], zAccBuffer[BUFFER_SIZE];
+float xSampleBuffer[BUFFER_SIZE_SAMPLE], ySampleBuffer[BUFFER_SIZE_SAMPLE], zSampleBuffer[BUFFER_SIZE_SAMPLE];
+
 
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP);
 
 void setup() {
-  Wire.begin(D7, D6);
+  Wire.begin(D4, D3);
   Serial.begin(115200);
-  
+
   Serial.print("Connecting to ");
   Serial.println(ssid);
-  WiFi.begin(ssid, password);
   WiFi.begin(ssid, password);
   while ( WiFi.status() != WL_CONNECTED ) {
     delay ( 500 );
@@ -47,14 +48,51 @@ void setup() {
   timeClient.begin();
   timeClient.update();
   timeClient.setTimeOffset(28800);
-  
+
   MPUSetup();
   Calibration();                                    //Calibrate sensor during startup
 }
 
 void loop() {
   readCalibratedAcceleration();
-  if ((accelX != 0) || (accelY != 0) || (accelZ != 0)) {
+
+  zSampleBuffer[indexOfBuffer] = accelX;
+  ltaIndex = indexOfBuffer + 1;
+  if (ltaIndex >= LTACount + STACount) {
+    ltaIndex = 0;
+  }
+  for (int i = ltaIndex, iteration = 0; iteration < LTACount ; iteration++) {
+    if (i >= LTACount + STACount) {
+      i = 0;
+    }
+    zLTA = zLTA + zSampleBuffer[i];
+    i++;
+    staIndex = i;
+  }
+  zLTA = zLTA / LTACount;
+
+  if (staIndex >= LTACount + STACount) {
+    staIndex = 0;
+  }
+
+  for (int i = staIndex, iteration = 0; iteration < STACount ; iteration++) {
+    if (i >= LTACount + STACount) {
+      i = 0;
+    }
+    zSTA = zSTA + zSampleBuffer[i];
+    i++;
+  }
+  zSTA = zSTA / LTACount;
+  indexOfBuffer++;
+  if (indexOfBuffer >= LTACount + STACount) {
+    indexOfBuffer = 0;
+  }
+  ratio = zSTA/zLTA;
+  Serial.println(ratio,4);
+  
+  //-----------------------------------------------------------------------------
+  /*
+    if ((accelX != 0) || (accelY != 0) || (accelZ != 0)) {
     while (idx < BUFFER_SIZE) {
       readCalibratedAcceleration();
       xAccBuffer[idx] = accelX;
@@ -64,19 +102,20 @@ void loop() {
     }
     idx = 0;
     serializeToJSON();
-  }
-  Serial.print(millis() - timer);
-  Serial.print("ms ");
-  Serial.print("Accel X: ");
-  Serial.print(accelX, 4);
-  Serial.print("  Accel Y: ");
-  Serial.print(accelY, 4);
-  Serial.print("  Accel Z: ");
-  Serial.println(accelZ, 4);
-
+    }
+    Serial.print(millis() - timer);
+    Serial.print("ms ");
+    Serial.print("Accel X: ");
+    Serial.print(accelX, 4);
+    Serial.print("  Accel Y: ");
+    Serial.print(accelY, 4);
+    Serial.print("  Accel Z: ");
+    Serial.println(accelZ, 4);
+  */
 }
 
 void MPUSetup() {
+  Serial.println("MPU Setup..");
   Wire.beginTransmission(MPU6050Address);
   Wire.write(0x6B);                                 //Power Management Register
   Wire.write(0x00);                                 //Turn off sleep mode
@@ -91,6 +130,7 @@ void MPUSetup() {
   Wire.write(0x1A);                                 //DLPF Config Register
   Wire.write(0x04);                                 //Setting DLPF to 21hz
   Wire.endTransmission();
+  Serial.println("Done Setting up..");
 }
 
 void readRawAcceleration() {
@@ -131,7 +171,7 @@ void readCalibratedAcceleration() {
   accelX = accelX / 1670.7;
   accelY = accelY / 1670.7;
   accelZ = accelZ / 1670.7;
-
+  /*
   if ((accelX < 0.05) && (accelX > -0.05)) {
     accelX = 0;
   }
@@ -140,10 +180,11 @@ void readCalibratedAcceleration() {
   }
   if ((accelZ < 0.5) && (accelZ > -0.5)) {
     accelZ = 0;
-  }
+  }*/
 }
 
 void Calibration() {
+  Serial.println("Beginning Calibration..");
   counter = 0;
   readRawAcceleration();
   delay(100);
@@ -175,12 +216,11 @@ void Calibration() {
 }
 
 void serializeToJSON() {
-  const size_t capacity = 3 * JSON_ARRAY_SIZE(50) + JSON_OBJECT_SIZE(7);
+  const size_t capacity = 3 * JSON_ARRAY_SIZE(50) + JSON_OBJECT_SIZE(6);
   DynamicJsonDocument doc(capacity);
 
   doc["id"] = deviceID;
-  doc["long"] = longitude;
-  doc["lat"] = latitude;
+  doc["wave"] = waveType;
   doc["time"] = timeClient.getEpochTime();
   JsonArray xacc = doc.createNestedArray("xacc");
   for (int i = 0; i < BUFFER_SIZE; i++) {
