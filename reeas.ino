@@ -4,12 +4,12 @@
 #include <Wire.h>
 #include <ArduinoJson.h>
 
-const char *ssid     = "PLDTHOMEFIBR_EtnmV";
-const char *password = "PLDTWIFIRtmBK";
+const char *ssid     = "AndroidAPEA68";
+const char *password = "icubed88";
 
 const int BUFFER_SIZE = 50;
-const int BUFFER_SIZE_SAMPLE = 110;
-const int STACount = 10, LTACount = 100;
+const int BUFFER_SIZE_SAMPLE = 275;
+const int STACount = 25, LTACount = 250;
 const uint8_t MPU6050Address = 0x68;
 const int LPFCounter = 20;
 const int CalibrationCounter = 250;
@@ -17,7 +17,8 @@ const byte deviceID = 1;
 
 byte counter = 0, waveType = 0, idleCounter = 50, indexOfBuffer, staIndex, ltaIndex;                 //Wave type : 0 for P-Wave, 1 for S-Wave
 
-float accelX, accelY, accelZ, zSTA, zLTA, ratio;
+float accelX, accelY, accelZ;
+float xSTA, xLTA, ySTA, yLTA, zSTA, zLTA, xRatio, yRatio, zRatio;
 int16_t sampleX, sampleY, sampleZ;
 long calibratedX, calibratedY, calibratedZ;
 float sample2X, sample2Y, sample2Z;
@@ -26,6 +27,8 @@ unsigned long currentms, lastms, timer;
 float xAccBuffer[BUFFER_SIZE], yAccBuffer[BUFFER_SIZE], zAccBuffer[BUFFER_SIZE];
 float xSampleBuffer[BUFFER_SIZE_SAMPLE], ySampleBuffer[BUFFER_SIZE_SAMPLE], zSampleBuffer[BUFFER_SIZE_SAMPLE];
 
+float temp[3];
+int tc;
 
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP);
@@ -55,41 +58,51 @@ void setup() {
 
 void loop() {
   readCalibratedAcceleration();
-
-  zSampleBuffer[indexOfBuffer] = accelX;
-  ltaIndex = indexOfBuffer + 1;
-  if (ltaIndex >= LTACount + STACount) {
-    ltaIndex = 0;
-  }
-  for (int i = ltaIndex, iteration = 0; iteration < LTACount ; iteration++) {
-    if (i >= LTACount + STACount) {
-      i = 0;
-    }
-    zLTA = zLTA + zSampleBuffer[i];
-    i++;
-    staIndex = i;
-  }
-  zLTA = zLTA / LTACount;
-
-  if (staIndex >= LTACount + STACount) {
-    staIndex = 0;
-  }
-
-  for (int i = staIndex, iteration = 0; iteration < STACount ; iteration++) {
-    if (i >= LTACount + STACount) {
-      i = 0;
-    }
-    zSTA = zSTA + zSampleBuffer[i];
-    i++;
-  }
-  zSTA = zSTA / LTACount;
-  indexOfBuffer++;
-  if (indexOfBuffer >= LTACount + STACount) {
-    indexOfBuffer = 0;
-  }
-  ratio = zSTA/zLTA;
-  Serial.println(ratio,4);
+  calculateSTALTARatio();
   
+    Serial.print("xRatio: ");
+    Serial.print(xRatio, 4);
+    Serial.print(" yRatio: ");
+    Serial.print(yRatio, 4);
+    Serial.print(" zRatio: ");
+    Serial.println(zRatio, 4);
+  /*
+  if (tc < 300) {
+    tc++;
+    Serial.print(".");
+  }
+  else {
+    Serial.println("");
+    if (xRatio > temp[0]) {
+      temp[0] = xRatio;
+      Serial.print("xRatio: ");
+      Serial.print(temp[0], 4);
+      Serial.print(" yRatio: ");
+      Serial.print(temp[1], 4);
+      Serial.print(" zRatio: ");
+      Serial.println(temp[2], 4);
+    }
+
+    if (yRatio > temp[1]) {
+      temp[1] = yRatio;
+      Serial.print("xRatio: ");
+      Serial.print(temp[0], 4);
+      Serial.print(" yRatio: ");
+      Serial.print(temp[1], 4);
+      Serial.print(" zRatio: ");
+      Serial.println(temp[2], 4);
+    }
+
+    if (zRatio > temp[2]) {
+      temp[2] = zRatio;
+      Serial.print("xRatio: ");
+      Serial.print(temp[0], 4);
+      Serial.print(" yRatio: ");
+      Serial.print(temp[1], 4);
+      Serial.print(" zRatio: ");
+      Serial.println(temp[2], 4);
+    }
+  }*/
   //-----------------------------------------------------------------------------
   /*
     if ((accelX != 0) || (accelY != 0) || (accelZ != 0)) {
@@ -102,16 +115,17 @@ void loop() {
     }
     idx = 0;
     serializeToJSON();
-    }
-    Serial.print(millis() - timer);
-    Serial.print("ms ");
-    Serial.print("Accel X: ");
-    Serial.print(accelX, 4);
-    Serial.print("  Accel Y: ");
-    Serial.print(accelY, 4);
-    Serial.print("  Accel Z: ");
-    Serial.println(accelZ, 4);
-  */
+    }*/
+    /*
+  Serial.print(millis() - timer);
+  Serial.print("ms ");
+  Serial.print("Accel X: ");
+  Serial.print(accelX, 4);
+  Serial.print("  Accel Y: ");
+  Serial.print(accelY, 4);
+  Serial.print("  Accel Z: ");
+  Serial.println(accelZ, 4);
+*/
 }
 
 void MPUSetup() {
@@ -128,7 +142,7 @@ void MPUSetup() {
 
   Wire.beginTransmission(MPU6050Address);
   Wire.write(0x1A);                                 //DLPF Config Register
-  Wire.write(0x04);                                 //Setting DLPF to 21hz
+  Wire.write(0x00);                                 //Setting DLPF to 21hz
   Wire.endTransmission();
   Serial.println("Done Setting up..");
 }
@@ -172,22 +186,22 @@ void readCalibratedAcceleration() {
   accelY = accelY / 1670.7;
   accelZ = accelZ / 1670.7;
   /*
-  if ((accelX < 0.05) && (accelX > -0.05)) {
+    if ((accelX < 0.05) && (accelX > -0.05)) {
     accelX = 0;
-  }
-  if ((accelY < 0.05) && (accelY > -0.05)) {
+    }
+    if ((accelY < 0.05) && (accelY > -0.05)) {
     accelY = 0;
-  }
-  if ((accelZ < 0.5) && (accelZ > -0.5)) {
+    }
+    if ((accelZ < 0.5) && (accelZ > -0.5)) {
     accelZ = 0;
-  }*/
+    }*/
 }
 
 void Calibration() {
   Serial.println("Beginning Calibration..");
   counter = 0;
   readRawAcceleration();
-  delay(100);
+  delay(200);
   Serial.print("Calibrating");
   while (counter < CalibrationCounter) {
     currentms = millis();
@@ -206,6 +220,7 @@ void Calibration() {
   calibratedX = calibratedX / CalibrationCounter;
   calibratedY = calibratedY / CalibrationCounter;
   calibratedZ = calibratedZ / CalibrationCounter;
+  calibratedZ = calibratedZ + 835;
   Serial.println("Calibration done.");
   Serial.print("X offset: ");
   Serial.print(calibratedX);
@@ -213,6 +228,53 @@ void Calibration() {
   Serial.print(calibratedY);
   Serial.print(" Z offset: ");
   Serial.println(calibratedZ);
+}
+
+void calculateSTALTARatio() {
+  xSampleBuffer[indexOfBuffer] = accelX;
+  ySampleBuffer[indexOfBuffer] = accelY;
+  zSampleBuffer[indexOfBuffer] = accelZ;
+  ltaIndex = indexOfBuffer + 1;
+  if (ltaIndex >= LTACount + STACount) {
+    ltaIndex = 0;
+  }
+  for (int i = ltaIndex, iteration = 0; iteration < LTACount ; iteration++) {
+    if (i >= LTACount + STACount) {
+      i = 0;
+    }
+    xLTA = xLTA + xSampleBuffer[i];
+    yLTA = yLTA + ySampleBuffer[i];
+    zLTA = zLTA + zSampleBuffer[i];
+    i++;
+    staIndex = i;
+  }
+  xLTA = xLTA / LTACount;
+  yLTA = yLTA / LTACount;
+  zLTA = zLTA / LTACount;
+
+  if (staIndex >= LTACount + STACount) {
+    staIndex = 0;
+  }
+
+  for (int i = staIndex, iteration = 0; iteration < STACount ; iteration++) {
+    if (i >= LTACount + STACount) {
+      i = 0;
+    }
+    xSTA = xSTA + xSampleBuffer[i];
+    ySTA = ySTA + ySampleBuffer[i];
+    zSTA = zSTA + zSampleBuffer[i];
+    i++;
+  }
+  xSTA = xSTA / STACount;
+  ySTA = ySTA / STACount;
+  zSTA = zSTA / STACount;
+  indexOfBuffer++;
+  if (indexOfBuffer >= LTACount + STACount) {
+    indexOfBuffer = 0;
+  }
+  xRatio = xSTA / xLTA;
+  yRatio = ySTA / yLTA;
+  zRatio = zSTA / zLTA;
 }
 
 void serializeToJSON() {
