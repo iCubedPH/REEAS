@@ -1,11 +1,10 @@
+#include <WiFiManager.h>
 #include <NTPClient.h>
 #include <WiFiUdp.h>
 #include <ESP8266WiFi.h>
 #include <Wire.h>
 #include <ArduinoJson.h>
-
-const char *ssid     = "AndroidAPEA68";
-const char *password = "icubed88";
+#include <Ticker.h>
 
 const int BUFFER_SIZE = 50;
 const int BUFFER_SIZE_SAMPLE = 275;
@@ -28,26 +27,30 @@ float xAccBuffer[BUFFER_SIZE], yAccBuffer[BUFFER_SIZE], zAccBuffer[BUFFER_SIZE];
 float xSampleBuffer[BUFFER_SIZE_SAMPLE], ySampleBuffer[BUFFER_SIZE_SAMPLE], zSampleBuffer[BUFFER_SIZE_SAMPLE];
 
 float temp[3];
-int tc;
+int tc, idx;
 
+Ticker ticker;
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP);
 
 void setup() {
   Wire.begin(D4, D3);
   Serial.begin(115200);
+  pinMode(LED, OUTPUT);
+  ticker.attach(0.8, tick);
 
-  Serial.print("Connecting to ");
-  Serial.println(ssid);
-  WiFi.begin(ssid, password);
-  while ( WiFi.status() != WL_CONNECTED ) {
-    delay ( 500 );
-    Serial.print ( "." );
+  WiFiManager wifiManager;
+  wifiManager.setAPCallback(configModeCallback);
+  if (!wifiManager.autoConnect()) {
+    Serial.println("failed to connect and hit timeout");
+    //reset and try again
+    ESP.reset();
+    delay(1000);
   }
-  Serial.println("");
-  Serial.println("WiFi connected.");
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());
+  Serial.println("Connected to Wifi");
+  ticker.detach();
+  digitalWrite(LED, LOW);
+
   timeClient.begin();
   timeClient.update();
   timeClient.setTimeOffset(28800);
@@ -59,19 +62,20 @@ void setup() {
 void loop() {
   readCalibratedAcceleration();
   calculateSTALTARatio();
-  
-    Serial.print("xRatio: ");
-    Serial.print(xRatio, 4);
-    Serial.print(" yRatio: ");
-    Serial.print(yRatio, 4);
-    Serial.print(" zRatio: ");
-    Serial.println(zRatio, 4);
+
+  Serial.print("xRatio: ");
+  Serial.print(xRatio, 4);
+  Serial.print(" yRatio: ");
+  Serial.print(yRatio, 4);
+  Serial.print(" zRatio: ");
+  Serial.println(zRatio, 4);
+
   /*
-  if (tc < 300) {
+    if (tc < 300) {
     tc++;
     Serial.print(".");
-  }
-  else {
+    }
+    else {
     Serial.println("");
     if (xRatio > temp[0]) {
       temp[0] = xRatio;
@@ -102,12 +106,13 @@ void loop() {
       Serial.print(" zRatio: ");
       Serial.println(temp[2], 4);
     }
-  }*/
+    }*/
   //-----------------------------------------------------------------------------
-  /*
-    if ((accelX != 0) || (accelY != 0) || (accelZ != 0)) {
+
+  if ((xRatio >= 2) || (xRatio <= -2)) {
     while (idx < BUFFER_SIZE) {
       readCalibratedAcceleration();
+      calculateSTALTARatio();
       xAccBuffer[idx] = accelX;
       yAccBuffer[idx] = accelY;
       zAccBuffer[idx] = accelZ;
@@ -115,17 +120,17 @@ void loop() {
     }
     idx = 0;
     serializeToJSON();
-    }*/
-    /*
-  Serial.print(millis() - timer);
-  Serial.print("ms ");
-  Serial.print("Accel X: ");
-  Serial.print(accelX, 4);
-  Serial.print("  Accel Y: ");
-  Serial.print(accelY, 4);
-  Serial.print("  Accel Z: ");
-  Serial.println(accelZ, 4);
-*/
+  }
+  /*
+    Serial.print(millis() - timer);
+    Serial.print("ms ");
+    Serial.print("Accel X: ");
+    Serial.print(accelX, 4);
+    Serial.print("  Accel Y: ");
+    Serial.print(accelY, 4);
+    Serial.print("  Accel Z: ");
+    Serial.println(accelZ, 4);
+  */
 }
 
 void MPUSetup() {
@@ -297,4 +302,19 @@ void serializeToJSON() {
     zacc.add(zAccBuffer[i]);
   }
   serializeJson(doc, Serial);
+}
+
+void tick()
+{
+  int state = digitalRead(LED);  // get the current state of GPIO1 pin
+  digitalWrite(LED, !state);     // set pin to the opposite state
+}
+
+void configModeCallback (WiFiManager *myWiFiManager) {
+  Serial.println("Entered config mode");
+  Serial.println(WiFi.softAPIP());
+  //if you used auto generated SSID, print it
+  Serial.println(myWiFiManager->getConfigPortalSSID());
+  //entered config mode, make led toggle faster
+  ticker.attach(0.2, tick);
 }
