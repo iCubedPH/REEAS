@@ -1,75 +1,187 @@
-#include <WiFiManager.h>
 #include <NTPClient.h>
 #include <WiFiUdp.h>
 #include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
 #include <Wire.h>
 #include <ArduinoJson.h>
+
+#include <WiFiManager.h>
 #include <Ticker.h>
 
+#define STALTATRIGGER 10
+#define WIFI_LED D8
+#define STATUS_LED D7
+#define BUZZER D5
+#define CD_TIME 6        //sending cooldown in 10s per count
+
+/*
+  const char *ssid     = "AndroidAPEA68";
+  const char *password = "icubed88";
+
+  const char *ssid     = "PLDTHOMEFIBR_EtnmV";
+  const char *password = "PLDTWIFIRtmBK";
+*/
 const int BUFFER_SIZE = 50;
 const int BUFFER_SIZE_SAMPLE = 275;
 const int STACount = 25, LTACount = 250;
 const uint8_t MPU6050Address = 0x68;
 const int LPFCounter = 20;
 const int CalibrationCounter = 250;
-const byte deviceID = 1;
+String deviceID = String("BAT01");
 
-byte counter = 0, waveType = 0, idleCounter = 50, indexOfBuffer, staIndex, ltaIndex;                 //Wave type : 0 for P-Wave, 1 for S-Wave
+byte counter = 0, indexOfBuffer, staIndex, ltaIndex;
 
 float accelX, accelY, accelZ;
 float xSTA, xLTA, ySTA, yLTA, zSTA, zLTA, xRatio, yRatio, zRatio;
 int16_t sampleX, sampleY, sampleZ;
 long calibratedX, calibratedY, calibratedZ;
 float sample2X, sample2Y, sample2Z;
-unsigned long currentms, lastms, timer;
+unsigned long currentms, lastms, timer, beep_ms;
 
 float xAccBuffer[BUFFER_SIZE], yAccBuffer[BUFFER_SIZE], zAccBuffer[BUFFER_SIZE];
 float xSampleBuffer[BUFFER_SIZE_SAMPLE], ySampleBuffer[BUFFER_SIZE_SAMPLE], zSampleBuffer[BUFFER_SIZE_SAMPLE];
 
-float temp[3];
-int tc, idx;
+int tc, idx, beep_counter, cd_counter_h_axis = 0, cd_counter_v_axis = 0;
+bool h_sent = false, v_sent = false, beep = false;    //booleans for checking if sensor sent data
 
 Ticker ticker;
+Ticker timer1;
+Ticker checker;
+
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP);
 
 void setup() {
   Wire.begin(D4, D3);
   Serial.begin(115200);
-  pinMode(LED, OUTPUT);
+
+  pinMode(WIFI_LED, OUTPUT);
+  pinMode(STATUS_LED, OUTPUT);
+  pinMode(BUZZER, OUTPUT);
+  digitalWrite(STATUS_LED, LOW);
+  digitalWrite(BUZZER, LOW);
+
   ticker.attach(0.8, tick);
 
   WiFiManager wifiManager;
+  wifiManager.setConfigPortalTimeout(60);
   wifiManager.setAPCallback(configModeCallback);
   if (!wifiManager.autoConnect()) {
     Serial.println("failed to connect and hit timeout");
     //reset and try again
     ESP.reset();
-    delay(1000);
+    delay(5000);
   }
   Serial.println("Connected to Wifi");
   ticker.detach();
-  digitalWrite(LED, LOW);
-
+  digitalWrite(WIFI_LED, HIGH);
+  /*
+    Serial.print("Connecting to ");
+    Serial.println(ssid);
+    WiFi.begin(ssid, password);
+    while ( WiFi.status() != WL_CONNECTED ) {
+    delay ( 500 );
+    Serial.print ( "." );
+    }
+    Serial.println("");
+    Serial.println("WiFi connected.");
+    Serial.println("IP address: ");
+    Serial.println(WiFi.localIP());
+  */
   timeClient.begin();
-  timeClient.update();
+  while (!timeClient.update()) {
+    timeClient.forceUpdate();
+  }
   timeClient.setTimeOffset(28800);
+  Serial.println(timeClient.getFormattedTime());
 
   MPUSetup();
   Calibration();                                    //Calibrate sensor during startup
+  Serial.print("Filling Sample Buffer...");
+  /*
+    for (int i = 0; i < 50; i++) {      //flush initial values to eliminate noise
+    readCalibratedAcceleration();
+    calculateSTALTARatio();
+    }
+
+    //for (int x = 0; x <= 100; x++) {
+    while ((xRatio > 2) || (yRatio > 2) || (zRatio > 2) || (xRatio < -2) || (yRatio < -2) || (zRatio < -2)) {
+    readCalibratedAcceleration();
+    calculateSTALTARatio();
+    Serial.print(".");
+    }
+    //}
+  */
+  /*
+    currentms = millis();
+    while (millis() - currentms <= 30000) {
+      readCalibratedAcceleration();
+      calculateSTALTARatio();
+      Serial.print(".");
+    }
+  */
+  Serial.println("");
+  timer1.attach(10, cooldown);
+  digitalWrite(STATUS_LED, HIGH);
+  checker.attach(30, check_connection);
 }
 
 void loop() {
   readCalibratedAcceleration();
   calculateSTALTARatio();
-
+  /*
+    Serial.print(millis() - timer);
+    Serial.print("ms ");
+    Serial.print("Accel X: ");
+    Serial.print(accelX, 4);
+    Serial.print("  Accel Y: ");
+    Serial.print(accelY, 4);
+    Serial.print("  Accel Z: ");
+    Serial.println(accelZ, 4);
+  */
+  /*
   Serial.print("xRatio: ");
   Serial.print(xRatio, 4);
   Serial.print(" yRatio: ");
   Serial.print(yRatio, 4);
   Serial.print(" zRatio: ");
   Serial.println(zRatio, 4);
+  */
 
+  if (v_sent == false) {
+    if (zRatio > STALTATRIGGER) {
+      idx = 0;
+      while (idx < BUFFER_SIZE) {
+        readCalibratedAcceleration();
+        calculateSTALTARatio();
+        xAccBuffer[idx] = accelX;
+        yAccBuffer[idx] = accelY;
+        zAccBuffer[idx] = accelZ;
+        idx++;
+      }
+      idx = 0;
+      serializeToJSON(0);
+      v_sent = true;
+      beep = true;
+    }
+  }
+  if (h_sent == false) {
+    if ((xRatio > STALTATRIGGER) || (yRatio > STALTATRIGGER)) {
+      idx = 0;
+      while (idx < BUFFER_SIZE) {
+        readCalibratedAcceleration();
+        calculateSTALTARatio();
+        xAccBuffer[idx] = accelX;
+        yAccBuffer[idx] = accelY;
+        zAccBuffer[idx] = accelZ;
+        idx++;
+      }
+      idx = 0;
+      serializeToJSON(1);
+      h_sent = true;
+      beep = true;
+    }
+  }
   /*
     if (tc < 300) {
     tc++;
@@ -108,11 +220,10 @@ void loop() {
     }
     }*/
   //-----------------------------------------------------------------------------
-
-  if ((xRatio >= 2) || (xRatio <= -2)) {
+  /*
+    if ((accelX != 0) || (accelY != 0) || (accelZ != 0)) {
     while (idx < BUFFER_SIZE) {
       readCalibratedAcceleration();
-      calculateSTALTARatio();
       xAccBuffer[idx] = accelX;
       yAccBuffer[idx] = accelY;
       zAccBuffer[idx] = accelZ;
@@ -120,7 +231,7 @@ void loop() {
     }
     idx = 0;
     serializeToJSON();
-  }
+    }*/
   /*
     Serial.print(millis() - timer);
     Serial.print("ms ");
@@ -131,6 +242,7 @@ void loop() {
     Serial.print("  Accel Z: ");
     Serial.println(accelZ, 4);
   */
+  beeper();
 }
 
 void MPUSetup() {
@@ -166,7 +278,7 @@ void readRawAcceleration() {
 void readCalibratedAcceleration() {
   timer = millis();
   counter = 0;
-  while (counter <= LPFCounter) {
+  while (counter < LPFCounter) {
     currentms = millis();
     if (currentms - lastms >= 1) {                  //get sample every 1ms (Accelerometer Max Sampling rate is 1kHz)
       lastms = currentms;
@@ -225,7 +337,7 @@ void Calibration() {
   calibratedX = calibratedX / CalibrationCounter;
   calibratedY = calibratedY / CalibrationCounter;
   calibratedZ = calibratedZ / CalibrationCounter;
-  calibratedZ = calibratedZ + 835;
+  //calibratedZ = calibratedZ + 835;
   Serial.println("Calibration done.");
   Serial.print("X offset: ");
   Serial.print(calibratedX);
@@ -282,34 +394,56 @@ void calculateSTALTARatio() {
   zRatio = zSTA / zLTA;
 }
 
-void serializeToJSON() {
-  const size_t capacity = 3 * JSON_ARRAY_SIZE(50) + JSON_OBJECT_SIZE(6);
+void serializeToJSON(int waveType) {    //Wave type : 0 for P-Wave, 1 for S-Wave
+  const size_t capacity = 3 * JSON_ARRAY_SIZE(BUFFER_SIZE) + JSON_OBJECT_SIZE(7);
   DynamicJsonDocument doc(capacity);
+  char JSONBUFFER[capacity];
 
-  doc["id"] = deviceID;
+  doc["station"] = deviceID;
+  doc["timestamp"] = timeClient.getEpochTime();
   doc["wave"] = waveType;
-  doc["time"] = timeClient.getEpochTime();
-  JsonArray xacc = doc.createNestedArray("xacc");
+
+
+  JsonArray va = doc.createNestedArray("va");
   for (int i = 0; i < BUFFER_SIZE; i++) {
-    xacc.add(xAccBuffer[i]);
+    va.add(zAccBuffer[i]);
   }
-  JsonArray yacc = doc.createNestedArray("yacc");
+
+  JsonArray ewa = doc.createNestedArray("ewa");
   for (int i = 0; i < BUFFER_SIZE; i++) {
-    yacc.add(yAccBuffer[i]);
+    ewa.add(yAccBuffer[i]);
   }
-  JsonArray zacc = doc.createNestedArray("zacc");
+
+  JsonArray nsa = doc.createNestedArray("nsa");
   for (int i = 0; i < BUFFER_SIZE; i++) {
-    zacc.add(zAccBuffer[i]);
+    nsa.add(xAccBuffer[i]);
   }
-  serializeJson(doc, Serial);
+  doc["wave"] = waveType;
+  serializeJson(doc, JSONBUFFER);
+  //serializeJsonPretty(doc, Serial);
+
+  HTTPClient http;    //Declare object of class HTTPClient
+
+  http.begin("http://www.reeas-web.com:3001/detections");      //Specify request destination
+  http.addHeader("Content-Type", "application/json");  //Specify content-type header
+
+  int httpCode = http.POST(JSONBUFFER);   //Send the request
+  String payload = http.getString();                  //Get the response payload
+
+  Serial.println(httpCode);   //Print HTTP return code
+  Serial.println(payload);    //Print request response payload
+
+  http.end();  //Close connection
 }
 
 void tick()
 {
-  int state = digitalRead(LED);  // get the current state of GPIO1 pin
-  digitalWrite(LED, !state);     // set pin to the opposite state
+  //toggle state
+  int state = digitalRead(WIFI_LED);  // get the current state of GPIO1 pin
+  digitalWrite(WIFI_LED, !state);     // set pin to the opposite state
 }
 
+//gets called when WiFiManager enters configuration mode
 void configModeCallback (WiFiManager *myWiFiManager) {
   Serial.println("Entered config mode");
   Serial.println(WiFi.softAPIP());
@@ -317,4 +451,47 @@ void configModeCallback (WiFiManager *myWiFiManager) {
   Serial.println(myWiFiManager->getConfigPortalSSID());
   //entered config mode, make led toggle faster
   ticker.attach(0.2, tick);
+}
+
+void cooldown() {
+  if (h_sent == true) {
+    cd_counter_h_axis++;
+    if (cd_counter_h_axis > CD_TIME) {
+      cd_counter_h_axis = 0;
+      h_sent = false;
+    }
+  }
+  if (v_sent == true) {
+    cd_counter_v_axis++;
+    if (cd_counter_v_axis > CD_TIME) {
+      cd_counter_v_axis = 0;
+      v_sent = false;
+    }
+  }
+}
+
+void beeper() {
+  if (beep == true) {
+    currentms = millis();
+    if (currentms - beep_ms >= 500) {
+      beep_ms = currentms;
+      int state = digitalRead(BUZZER);
+      digitalWrite(BUZZER, !state);
+      beep_counter++;
+      if (beep_counter > 6) {
+        beep_counter = 0;
+        beep = false;
+        digitalWrite(BUZZER, LOW);
+      }
+    }
+  }
+}
+
+void check_connection() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("Wifi Disconnected");
+    //reset and try again
+    ESP.reset();
+    delay(5000);
+  }
 }
