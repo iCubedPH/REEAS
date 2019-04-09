@@ -14,13 +14,6 @@
 #define BUZZER D5
 #define CD_TIME 6        //sending cooldown in 10s per count
 
-/*
-  const char *ssid     = "AndroidAPEA68";
-  const char *password = "icubed88";
-
-  const char *ssid     = "PLDTHOMEFIBR_EtnmV";
-  const char *password = "PLDTWIFIRtmBK";
-*/
 const int BUFFER_SIZE = 50;
 const int BUFFER_SIZE_SAMPLE = 275;
 const int STACount = 25, LTACount = 250;
