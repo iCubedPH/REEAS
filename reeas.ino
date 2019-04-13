@@ -4,15 +4,19 @@
 #include <ESP8266HTTPClient.h>
 #include <Wire.h>
 #include <ArduinoJson.h>
-
 #include <WiFiManager.h>
 #include <Ticker.h>
 
-#define STALTATRIGGER 10
+#define STALTATRIGGER 15
 #define WIFI_LED D8
 #define STATUS_LED D7
 #define BUZZER D5
 #define CD_TIME 6        //sending cooldown in 10s per count
+
+
+const float latitude = 13.91530;
+const float longitude = 121.22901;
+String deviceID = String("BAT01");
 
 const int BUFFER_SIZE = 50;
 const int BUFFER_SIZE_SAMPLE = 275;
@@ -20,9 +24,8 @@ const int STACount = 25, LTACount = 250;
 const uint8_t MPU6050Address = 0x68;
 const int LPFCounter = 20;
 const int CalibrationCounter = 250;
-String deviceID = String("BAT01");
 
-byte counter = 0, indexOfBuffer, staIndex, ltaIndex;
+byte counter = 0, indexOfBuffer, staIndex, ltaIndex, start_up = 2;
 
 float accelX, accelY, accelZ;
 float xSTA, xLTA, ySTA, yLTA, zSTA, zLTA, xRatio, yRatio, zRatio;
@@ -34,8 +37,8 @@ unsigned long currentms, lastms, timer, beep_ms;
 float xAccBuffer[BUFFER_SIZE], yAccBuffer[BUFFER_SIZE], zAccBuffer[BUFFER_SIZE];
 float xSampleBuffer[BUFFER_SIZE_SAMPLE], ySampleBuffer[BUFFER_SIZE_SAMPLE], zSampleBuffer[BUFFER_SIZE_SAMPLE];
 
-int tc, idx, beep_counter, cd_counter_h_axis = 0, cd_counter_v_axis = 0;
-bool h_sent = false, v_sent = false, beep = false;    //booleans for checking if sensor sent data
+int tc, idx, beep_counter, status_counter, cd_counter_h_axis = 0, cd_counter_v_axis = 0;
+bool h_sent = false, v_sent = false, beep = true, send_ready = false;    //booleans for checking if sensor sent data
 
 Ticker ticker;
 Ticker timer1;
@@ -57,7 +60,7 @@ void setup() {
   ticker.attach(0.8, tick);
 
   WiFiManager wifiManager;
-  wifiManager.setConfigPortalTimeout(60);
+  wifiManager.setConfigPortalTimeout(180);
   wifiManager.setAPCallback(configModeCallback);
   if (!wifiManager.autoConnect()) {
     Serial.println("failed to connect and hit timeout");
@@ -68,6 +71,7 @@ void setup() {
   Serial.println("Connected to Wifi");
   ticker.detach();
   digitalWrite(WIFI_LED, HIGH);
+
   /*
     Serial.print("Connecting to ");
     Serial.println(ssid);
@@ -120,6 +124,7 @@ void setup() {
 }
 
 void loop() {
+
   readCalibratedAcceleration();
   calculateSTALTARatio();
   /*
@@ -131,111 +136,116 @@ void loop() {
     Serial.print(accelY, 4);
     Serial.print("  Accel Z: ");
     Serial.println(accelZ, 4);
-  */
-  /*
-  Serial.print("xRatio: ");
-  Serial.print(xRatio, 4);
-  Serial.print(" yRatio: ");
-  Serial.print(yRatio, 4);
-  Serial.print(" zRatio: ");
-  Serial.println(zRatio, 4);
-  */
+Serial.print("xRatio: ");
+    Serial.print(xRatio, 4);
+    Serial.print(" yRatio: ");
+    Serial.print(yRatio, 4);
+    Serial.print(" zRatio: ");
+    Serial.println(zRatio, 4);
 
-  if (v_sent == false) {
-    if (zRatio > STALTATRIGGER) {
-      idx = 0;
+    
+  */
+  
+    
+  
+  if (send_ready == true) {
+    if (v_sent == false) {
+      if (zRatio > STALTATRIGGER) {
+        idx = 0;
+        while (idx < BUFFER_SIZE) {
+          readCalibratedAcceleration();
+          calculateSTALTARatio();
+          xAccBuffer[idx] = accelX;
+          yAccBuffer[idx] = accelY;
+          zAccBuffer[idx] = accelZ;
+          idx++;
+        }
+        idx = 0;
+        serializeToJSON(0);
+        v_sent = true;
+        beep = true;
+      }
+    }
+    if (h_sent == false) {
+      if ((xRatio > STALTATRIGGER) || (yRatio > STALTATRIGGER)) {
+        idx = 0;
+        while (idx < BUFFER_SIZE) {
+          readCalibratedAcceleration();
+          calculateSTALTARatio();
+          xAccBuffer[idx] = accelX;
+          yAccBuffer[idx] = accelY;
+          zAccBuffer[idx] = accelZ;
+          idx++;
+        }
+        idx = 0;
+        serializeToJSON(1);
+        h_sent = true;
+        beep = true;
+      }
+    }
+    /*
+      if (tc < 300) {
+      tc++;
+      Serial.print(".");
+      }
+      else {
+      Serial.println("");
+      if (xRatio > temp[0]) {
+        temp[0] = xRatio;
+        Serial.print("xRatio: ");
+        Serial.print(temp[0], 4);
+        Serial.print(" yRatio: ");
+        Serial.print(temp[1], 4);
+        Serial.print(" zRatio: ");
+        Serial.println(temp[2], 4);
+      }
+
+      if (yRatio > temp[1]) {
+        temp[1] = yRatio;
+        Serial.print("xRatio: ");
+        Serial.print(temp[0], 4);
+        Serial.print(" yRatio: ");
+        Serial.print(temp[1], 4);
+        Serial.print(" zRatio: ");
+        Serial.println(temp[2], 4);
+      }
+
+      if (zRatio > temp[2]) {
+        temp[2] = zRatio;
+        Serial.print("xRatio: ");
+        Serial.print(temp[0], 4);
+        Serial.print(" yRatio: ");
+        Serial.print(temp[1], 4);
+        Serial.print(" zRatio: ");
+        Serial.println(temp[2], 4);
+      }
+      }*/
+    //-----------------------------------------------------------------------------
+    /*
+      if ((accelX != 0) || (accelY != 0) || (accelZ != 0)) {
       while (idx < BUFFER_SIZE) {
         readCalibratedAcceleration();
-        calculateSTALTARatio();
         xAccBuffer[idx] = accelX;
         yAccBuffer[idx] = accelY;
         zAccBuffer[idx] = accelZ;
         idx++;
       }
       idx = 0;
-      serializeToJSON(0);
-      v_sent = true;
-      beep = true;
-    }
+      serializeToJSON();
+      }*/
+    /*
+      Serial.print(millis() - timer);
+      Serial.print("ms ");
+      Serial.print("Accel X: ");
+      Serial.print(accelX, 4);
+      Serial.print("  Accel Y: ");
+      Serial.print(accelY, 4);
+      Serial.print("  Accel Z: ");
+      Serial.println(accelZ, 4);
+    */
+   
+    beeper();
   }
-  if (h_sent == false) {
-    if ((xRatio > STALTATRIGGER) || (yRatio > STALTATRIGGER)) {
-      idx = 0;
-      while (idx < BUFFER_SIZE) {
-        readCalibratedAcceleration();
-        calculateSTALTARatio();
-        xAccBuffer[idx] = accelX;
-        yAccBuffer[idx] = accelY;
-        zAccBuffer[idx] = accelZ;
-        idx++;
-      }
-      idx = 0;
-      serializeToJSON(1);
-      h_sent = true;
-      beep = true;
-    }
-  }
-  /*
-    if (tc < 300) {
-    tc++;
-    Serial.print(".");
-    }
-    else {
-    Serial.println("");
-    if (xRatio > temp[0]) {
-      temp[0] = xRatio;
-      Serial.print("xRatio: ");
-      Serial.print(temp[0], 4);
-      Serial.print(" yRatio: ");
-      Serial.print(temp[1], 4);
-      Serial.print(" zRatio: ");
-      Serial.println(temp[2], 4);
-    }
-
-    if (yRatio > temp[1]) {
-      temp[1] = yRatio;
-      Serial.print("xRatio: ");
-      Serial.print(temp[0], 4);
-      Serial.print(" yRatio: ");
-      Serial.print(temp[1], 4);
-      Serial.print(" zRatio: ");
-      Serial.println(temp[2], 4);
-    }
-
-    if (zRatio > temp[2]) {
-      temp[2] = zRatio;
-      Serial.print("xRatio: ");
-      Serial.print(temp[0], 4);
-      Serial.print(" yRatio: ");
-      Serial.print(temp[1], 4);
-      Serial.print(" zRatio: ");
-      Serial.println(temp[2], 4);
-    }
-    }*/
-  //-----------------------------------------------------------------------------
-  /*
-    if ((accelX != 0) || (accelY != 0) || (accelZ != 0)) {
-    while (idx < BUFFER_SIZE) {
-      readCalibratedAcceleration();
-      xAccBuffer[idx] = accelX;
-      yAccBuffer[idx] = accelY;
-      zAccBuffer[idx] = accelZ;
-      idx++;
-    }
-    idx = 0;
-    serializeToJSON();
-    }*/
-  /*
-    Serial.print(millis() - timer);
-    Serial.print("ms ");
-    Serial.print("Accel X: ");
-    Serial.print(accelX, 4);
-    Serial.print("  Accel Y: ");
-    Serial.print(accelY, 4);
-    Serial.print("  Accel Z: ");
-    Serial.println(accelZ, 4);
-  */
-  beeper();
 }
 
 void MPUSetup() {
@@ -263,9 +273,9 @@ void readRawAcceleration() {
   Wire.endTransmission();
   Wire.requestFrom(MPU6050Address, 6);              //Request Accel Registers (3B - 40)
   while (Wire.available() < 6);
-  sampleX = Wire.read() << 8 | Wire.read();
-  sampleY = Wire.read() << 8 | Wire.read();
   sampleZ = Wire.read() << 8 | Wire.read();
+  sampleY = Wire.read() << 8 | Wire.read();
+  sampleX = Wire.read() << 8 | Wire.read();
 }
 
 void readCalibratedAcceleration() {
@@ -292,9 +302,9 @@ void readCalibratedAcceleration() {
   sample2X = 0;
   sample2Y = 0;
   sample2Z = 0;
-  accelX = accelX / 1670.7;
-  accelY = accelY / 1670.7;
-  accelZ = accelZ / 1670.7;
+  //accelX = accelX / 1670.13;
+  //accelY = accelY / 1670.13;
+  //accelZ = accelZ / 1670.13;
   /*
     if ((accelX < 0.05) && (accelX > -0.05)) {
     accelX = 0;
@@ -413,20 +423,20 @@ void serializeToJSON(int waveType) {    //Wave type : 0 for P-Wave, 1 for S-Wave
   }
   doc["wave"] = waveType;
   serializeJson(doc, JSONBUFFER);
-  //serializeJsonPretty(doc, Serial);
+  serializeJson(doc, Serial);
+  
+    HTTPClient http;    //Declare object of class HTTPClient
 
-  HTTPClient http;    //Declare object of class HTTPClient
+    http.begin("http://www.reeas-web.com:3001/detections");      //Specify request destination
+    http.addHeader("Content-Type", "application/json");  //Specify content-type header
 
-  http.begin("http://www.reeas-web.com:3001/detections");      //Specify request destination
-  http.addHeader("Content-Type", "application/json");  //Specify content-type header
+    int httpCode = http.POST(JSONBUFFER);   //Send the request
+    String payload = http.getString();                  //Get the response payload
 
-  int httpCode = http.POST(JSONBUFFER);   //Send the request
-  String payload = http.getString();                  //Get the response payload
+    Serial.println(httpCode);   //Print HTTP return code
+    Serial.println(payload);    //Print request response payload
 
-  Serial.println(httpCode);   //Print HTTP return code
-  Serial.println(payload);    //Print request response payload
-
-  http.end();  //Close connection
+    http.end();  //Close connection
 }
 
 void tick()
@@ -447,6 +457,12 @@ void configModeCallback (WiFiManager *myWiFiManager) {
 }
 
 void cooldown() {
+  if (start_up > 0) {
+    start_up--;
+    if (start_up == 0) {
+      send_ready = true;
+    }
+  }
   if (h_sent == true) {
     cd_counter_h_axis++;
     if (cd_counter_h_axis > CD_TIME) {
@@ -486,5 +502,34 @@ void check_connection() {
     //reset and try again
     ESP.reset();
     delay(5000);
+  }
+
+  status_counter++;
+  if (status_counter > 20) {
+    const size_t capacity = JSON_OBJECT_SIZE(5);
+    DynamicJsonDocument doc(capacity);
+    char JSONBUFFER[capacity];
+
+    doc["station"] = deviceID;
+    doc["latitude"] = latitude;
+    doc["longitude"] = longitude;
+    doc["enabled"] = 1;
+
+    serializeJson(doc, JSONBUFFER);
+    serializeJson(doc, Serial);
+
+    HTTPClient http;    //Declare object of class HTTPClient
+
+    http.begin("http://www.reeas-web.com:3001/stations");      //Specify request destination
+    http.addHeader("Content-Type", "application/json");  //Specify content-type header
+
+    int httpCode = http.POST(JSONBUFFER);   //Send the request
+    String payload = http.getString();                  //Get the response payload
+
+    Serial.println(httpCode);   //Print HTTP return code
+    Serial.println(payload);    //Print request response payload
+
+    http.end();  //Close connection
+    status_counter = 0;
   }
 }
