@@ -14,9 +14,9 @@
 #define CD_TIME 6        //sending cooldown in 10s per count
 
 
-const float latitude = 13.91530;
-const float longitude = 121.22901;
-String deviceID = String("BAT01");
+const float latitude = 14.33333;
+const float longitude = 120.96008;
+String deviceID = String("CAV02");
 
 const int BUFFER_SIZE = 50;
 const int BUFFER_SIZE_SAMPLE = 275;
@@ -25,7 +25,7 @@ const uint8_t MPU6050Address = 0x68;
 const int LPFCounter = 20;
 const int CalibrationCounter = 250;
 
-byte counter = 0, indexOfBuffer, staIndex, ltaIndex, start_up = 2;
+int counter = 0, indexOfBuffer, staIndex, ltaIndex, start_up = 2;
 
 float accelX, accelY, accelZ;
 float xSTA, xLTA, ySTA, yLTA, zSTA, zLTA, xRatio, yRatio, zRatio;
@@ -37,8 +37,8 @@ unsigned long currentms, lastms, timer, beep_ms;
 float xAccBuffer[BUFFER_SIZE], yAccBuffer[BUFFER_SIZE], zAccBuffer[BUFFER_SIZE];
 float xSampleBuffer[BUFFER_SIZE_SAMPLE], ySampleBuffer[BUFFER_SIZE_SAMPLE], zSampleBuffer[BUFFER_SIZE_SAMPLE];
 
-int tc, idx, beep_counter, status_counter, cd_counter_h_axis = 0, cd_counter_v_axis = 0;
-bool h_sent = false, v_sent = false, beep = true, send_ready = false;    //booleans for checking if sensor sent data
+int tc, idx, beep_counter, beep_counter_2, status_counter = 18, cd_counter_h_axis = 0, cd_counter_v_axis = 0;
+bool h_sent = false, v_sent = false, beep = true, send_ready = false, beep_once = false;   //booleans for checking if sensor sent data
 
 Ticker ticker;
 Ticker timer1;
@@ -91,7 +91,33 @@ void setup() {
   }
   timeClient.setTimeOffset(28800);
   Serial.println(timeClient.getFormattedTime());
+  //-----------------------------
+  const size_t capacity = JSON_OBJECT_SIZE(5);
+  DynamicJsonDocument doc(capacity);
+  char JSONBUFFER[capacity];
 
+  doc["station"] = deviceID;
+  doc["latitude"] = latitude;
+  doc["longitude"] = longitude;
+  doc["enabled"] = 1;
+  doc["enabled"] = 1;
+
+  serializeJson(doc, JSONBUFFER);
+  //serializeJson(doc, Serial);
+
+  HTTPClient http;    //Declare object of class HTTPClient
+
+  http.begin("http://www.reeas-web.com:3001/stations");      //Specify request destination
+  http.addHeader("Content-Type", "application/json");  //Specify content-type header
+
+  int httpCode = http.POST(JSONBUFFER);   //Send the request
+  String payload = http.getString();                  //Get the response payload
+
+  Serial.println(httpCode);   //Print HTTP return code
+  Serial.println(payload);    //Print request response payload
+
+  http.end();  //Close connection
+  //--------------------------
   MPUSetup();
   Calibration();                                    //Calibrate sensor during startup
   Serial.print("Filling Sample Buffer...");
@@ -126,7 +152,7 @@ void setup() {
 void loop() {
 
   readCalibratedAcceleration();
-  calculateSTALTARatio();
+  //calculateSTALTARatio();
   /*
     Serial.print(millis() - timer);
     Serial.print("ms ");
@@ -136,21 +162,20 @@ void loop() {
     Serial.print(accelY, 4);
     Serial.print("  Accel Z: ");
     Serial.println(accelZ, 4);
-Serial.print("xRatio: ");
+    Serial.print("xRatio: ");
     Serial.print(xRatio, 4);
     Serial.print(" yRatio: ");
     Serial.print(yRatio, 4);
     Serial.print(" zRatio: ");
     Serial.println(zRatio, 4);
 
-    
+
   */
-  
-    
-  
+
   if (send_ready == true) {
     if (v_sent == false) {
-      if (zRatio > STALTATRIGGER) {
+      /*
+        if (zRatio > STALTATRIGGER) {
         idx = 0;
         while (idx < BUFFER_SIZE) {
           readCalibratedAcceleration();
@@ -162,12 +187,25 @@ Serial.print("xRatio: ");
         }
         idx = 0;
         serializeToJSON(0);
+      */
+      if ((accelX > 167) || (accelX < -167)) {
+        while (idx < BUFFER_SIZE) {
+          readCalibratedAcceleration();
+          xAccBuffer[idx] = accelX;
+          yAccBuffer[idx] = accelY;
+          zAccBuffer[idx] = accelZ;
+          idx++;
+        }
+        idx = 0;
+        serializeToJSON(0);
         v_sent = true;
         beep = true;
       }
     }
+
     if (h_sent == false) {
-      if ((xRatio > STALTATRIGGER) || (yRatio > STALTATRIGGER)) {
+      /*
+        if ((xRatio > STALTATRIGGER) || (yRatio > STALTATRIGGER)) {
         idx = 0;
         while (idx < BUFFER_SIZE) {
           readCalibratedAcceleration();
@@ -178,10 +216,22 @@ Serial.print("xRatio: ");
           idx++;
         }
         idx = 0;
+      */
+      if ((accelY > 100) || (accelY < -100) || (accelZ > 100) || (accelZ < -100)) {
+        idx = 0;
+        while (idx < BUFFER_SIZE) {
+          readCalibratedAcceleration();
+          xAccBuffer[idx] = accelX;
+          yAccBuffer[idx] = accelY;
+          zAccBuffer[idx] = accelZ;
+          idx++;
+        }
+        idx = 0;
         serializeToJSON(1);
-        h_sent = true;
+        v_sent = true;
         beep = true;
       }
+
     }
     /*
       if (tc < 300) {
@@ -243,8 +293,8 @@ Serial.print("xRatio: ");
       Serial.print("  Accel Z: ");
       Serial.println(accelZ, 4);
     */
-   
-    beeper();
+
+    //beeper();
   }
 }
 
@@ -306,15 +356,16 @@ void readCalibratedAcceleration() {
   //accelY = accelY / 1670.13;
   //accelZ = accelZ / 1670.13;
   /*
-    if ((accelX < 0.05) && (accelX > -0.05)) {
-    accelX = 0;
+    if ((accelX < 84) && (accelX > -84)) {
+      accelX = 0;
     }
-    if ((accelY < 0.05) && (accelY > -0.05)) {
-    accelY = 0;
+    if ((accelY < 84) && (accelY > -84)) {
+      accelY = 0;
     }
-    if ((accelZ < 0.5) && (accelZ > -0.5)) {
-    accelZ = 0;
-    }*/
+    if ((accelZ < 84) && (accelZ > -84)) {
+      accelZ = 0;
+    }
+  */
 }
 
 void Calibration() {
@@ -424,19 +475,19 @@ void serializeToJSON(int waveType) {    //Wave type : 0 for P-Wave, 1 for S-Wave
   doc["wave"] = waveType;
   serializeJson(doc, JSONBUFFER);
   serializeJson(doc, Serial);
-  
-    HTTPClient http;    //Declare object of class HTTPClient
 
-    http.begin("http://www.reeas-web.com:3001/detections");      //Specify request destination
-    http.addHeader("Content-Type", "application/json");  //Specify content-type header
+  HTTPClient http;    //Declare object of class HTTPClient
 
-    int httpCode = http.POST(JSONBUFFER);   //Send the request
-    String payload = http.getString();                  //Get the response payload
+  http.begin("http://www.reeas-web.com:3001/detections");      //Specify request destination
+  http.addHeader("Content-Type", "application/json");  //Specify content-type header
 
-    Serial.println(httpCode);   //Print HTTP return code
-    Serial.println(payload);    //Print request response payload
+  int httpCode = http.POST(JSONBUFFER);   //Send the request
+  String payload = http.getString();                  //Get the response payload
 
-    http.end();  //Close connection
+  Serial.println(httpCode);   //Print HTTP return code
+  Serial.println(payload);    //Print request response payload
+
+  http.end();  //Close connection
 }
 
 void tick()
@@ -494,6 +545,20 @@ void beeper() {
       }
     }
   }
+  if (beep_once == true) {
+    currentms = millis();
+    if (currentms - beep_ms >= 500) {
+      beep_ms = currentms;
+      int state = digitalRead(BUZZER);
+      digitalWrite(BUZZER, !state);
+      beep_counter_2++;
+      if (beep_counter_2 > 2) {
+        beep_counter_2 = 0;
+        beep_once = false;
+        digitalWrite(BUZZER, LOW);
+      }
+    }
+  }
 }
 
 void check_connection() {
@@ -505,7 +570,7 @@ void check_connection() {
   }
 
   status_counter++;
-  if (status_counter > 20) {
+  if (status_counter > 10) {
     const size_t capacity = JSON_OBJECT_SIZE(5);
     DynamicJsonDocument doc(capacity);
     char JSONBUFFER[capacity];
@@ -514,9 +579,10 @@ void check_connection() {
     doc["latitude"] = latitude;
     doc["longitude"] = longitude;
     doc["enabled"] = 1;
+    doc["enabled"] = 1;
 
     serializeJson(doc, JSONBUFFER);
-    serializeJson(doc, Serial);
+    //serializeJson(doc, Serial);
 
     HTTPClient http;    //Declare object of class HTTPClient
 
@@ -531,5 +597,6 @@ void check_connection() {
 
     http.end();  //Close connection
     status_counter = 0;
+    beep_once = false;
   }
 }
