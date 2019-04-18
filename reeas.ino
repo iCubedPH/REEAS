@@ -14,9 +14,9 @@
 #define CD_TIME 6        //sending cooldown in 10s per count
 
 
-const float latitude = 14.33333;
-const float longitude = 120.96008;
-String deviceID = String("CAV02");
+const float latitude = 13.9153;
+const float longitude = 121.229;
+String deviceID = String("BAT01");
 
 const int BUFFER_SIZE = 50;
 const int BUFFER_SIZE_SAMPLE = 275;
@@ -188,7 +188,7 @@ void loop() {
         idx = 0;
         serializeToJSON(0);
       */
-      if ((accelX > 167) || (accelX < -167)) {
+      if ((accelX > 300) || (accelX < -300)) {
         while (idx < BUFFER_SIZE) {
           readCalibratedAcceleration();
           xAccBuffer[idx] = accelX;
@@ -228,7 +228,7 @@ void loop() {
         }
         idx = 0;
         serializeToJSON(1);
-        v_sent = true;
+        h_sent = true;
         beep = true;
       }
 
@@ -294,7 +294,7 @@ void loop() {
       Serial.println(accelZ, 4);
     */
 
-    //beeper();
+    beeper();
   }
 }
 
@@ -597,6 +597,8 @@ void check_connection() {
 
     http.end();  //Close connection
     status_counter = 0;
-    beep_once = false;
+    if (httpCode == 200) {
+      beep_once = true;
+    }
   }
 }
