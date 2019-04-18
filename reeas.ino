@@ -14,8 +14,8 @@
 #define CD_TIME 6        //sending cooldown in 10s per count
 
 
-const float latitude = 13.9153;
-const float longitude = 121.229;
+const float latitude = 13.91530;
+const float longitude = 121.22930;
 String deviceID = String("BAT01");
 
 const int BUFFER_SIZE = 50;
@@ -92,6 +92,7 @@ void setup() {
   timeClient.setTimeOffset(28800);
   Serial.println(timeClient.getFormattedTime());
   //-----------------------------
+  
   const size_t capacity = JSON_OBJECT_SIZE(5);
   DynamicJsonDocument doc(capacity);
   char JSONBUFFER[capacity];
@@ -103,7 +104,7 @@ void setup() {
   doc["enabled"] = 1;
 
   serializeJson(doc, JSONBUFFER);
-  //serializeJson(doc, Serial);
+  serializeJson(doc, Serial);
 
   HTTPClient http;    //Declare object of class HTTPClient
 
@@ -117,6 +118,7 @@ void setup() {
   Serial.println(payload);    //Print request response payload
 
   http.end();  //Close connection
+  
   //--------------------------
   MPUSetup();
   Calibration();                                    //Calibrate sensor during startup
@@ -570,35 +572,41 @@ void check_connection() {
   }
 
   status_counter++;
-  if (status_counter > 10) {
-    const size_t capacity = JSON_OBJECT_SIZE(5);
-    DynamicJsonDocument doc(capacity);
-    char JSONBUFFER[capacity];
-
-    doc["station"] = deviceID;
-    doc["latitude"] = latitude;
-    doc["longitude"] = longitude;
-    doc["enabled"] = 1;
-    doc["enabled"] = 1;
-
-    serializeJson(doc, JSONBUFFER);
-    //serializeJson(doc, Serial);
-
-    HTTPClient http;    //Declare object of class HTTPClient
-
-    http.begin("http://www.reeas-web.com:3001/stations");      //Specify request destination
-    http.addHeader("Content-Type", "application/json");  //Specify content-type header
-
-    int httpCode = http.POST(JSONBUFFER);   //Send the request
-    String payload = http.getString();                  //Get the response payload
-
-    Serial.println(httpCode);   //Print HTTP return code
-    Serial.println(payload);    //Print request response payload
-
-    http.end();  //Close connection
+  if (status_counter > 20) {
+    send_status();
     status_counter = 0;
-    if (httpCode == 200) {
-      beep_once = true;
-    }
   }
 }
+
+void send_status() {
+  const size_t capacity = JSON_OBJECT_SIZE(5);
+  DynamicJsonDocument doc(capacity);
+  char JSONBUFFER[capacity];
+
+  doc["station"] = deviceID;
+  doc["latitude"] = latitude;
+  doc["longitude"] = longitude;
+  doc["enabled"] = 1;
+  doc["enabled"] = 1;
+
+  serializeJson(doc, JSONBUFFER);
+  serializeJson(doc, Serial);
+
+  HTTPClient http;    //Declare object of class HTTPClient
+
+  http.begin("http://www.reeas-web.com:3001/stations");      //Specify request destination
+  http.addHeader("Content-Type", "application/json");  //Specify content-type header
+
+  int httpCode = http.POST(JSONBUFFER);   //Send the request
+  String payload = http.getString();                  //Get the response payload
+
+  Serial.println(httpCode);   //Print HTTP return code
+  Serial.println(payload);    //Print request response payload
+
+  http.end();  //Close connection
+
+  if (httpCode == 200) {
+    beep_once = true;
+  }
+}
+
